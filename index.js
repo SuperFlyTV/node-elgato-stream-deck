@@ -13,6 +13,8 @@ const NUM_FIRST_PAGE_PIXELS = 2583;
 const NUM_SECOND_PAGE_PIXELS = 2601;
 const ICON_SIZE = 72;
 const NUM_TOTAL_PIXELS = NUM_FIRST_PAGE_PIXELS + NUM_SECOND_PAGE_PIXELS;
+const PANEL_BUTTONS_X = 5;
+const PANEL_BUTTONS_Y = 3;
 
 class StreamDeck extends EventEmitter {
 	constructor(device) {
@@ -167,6 +169,48 @@ class StreamDeck extends EventEmitter {
 		return Jimp.read(filePath).then((err, image) => {
 
 			image
+				.resize( this.ICON_SIZE, this.ICON_SIZE )
+				.getBuffer( Jimp.MIME_BMP, (err, imageBuffer) => {
+					if (err) throw err;
+					
+					var shouldBeSize = this.ICON_SIZE * this.ICON_SIZE * 3;
+					this.fillImage(keyIndex, imageBuffer.slice(imageBuffer.length-shouldBeSize  ));
+				});
+		});
+	}
+	/**
+	 * Fill's the whole panel with an image from a file.
+	 * @param {String} filePath A file path to an image file
+	 * @returns {Promise<void>} Resolves when the file has been written
+	 */
+	fillImageOnAll(filePath) {
+		StreamDeck.checkValidKeyIndex(keyIndex);
+		
+		return Jimp.read(filePath).then((err, image) => {
+	
+			image
+				.contain( this.PANEL_BUTTONS_X, this.PANEL_BUTTONS_Y );
+				
+			for (var y=0; y<this.PANEL_BUTTONS_Y;y++) {
+				for (var x=0; x<this.PANEL_BUTTONS_X;x++) {
+
+					(()=> {
+						var i = (y*this.PANEL_BUTTONS_X)+this.PANEL_BUTTONS_Y-x-1;
+						
+						var buttonImg = image.clone();
+
+						buttonImg
+							.crop( x*this.ICON_SIZE, y*this.ICON_SIZE, this.ICON_SIZE, this.ICON_SIZE)
+							.getBuffer( Jimp.MIME_BMP, (a,imageBuffer) => {
+								
+								var shouldBeSize = this.ICON_SIZE*this.ICON_SIZE * 3;
+								this.fillImage(i, imageBuffer.slice(imageBuffer.length-shouldBeSize  ));
+							});
+						
+					})();
+				}
+			}
+			
 				.resize( this.ICON_SIZE, this.ICON_SIZE )
 				.getBuffer( Jimp.MIME_BMP, (err, imageBuffer) => {
 					if (err) throw err;
