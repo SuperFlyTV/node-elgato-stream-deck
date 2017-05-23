@@ -5,7 +5,7 @@ const EventEmitter = require('events');
 
 // Packages
 const HID = require('node-hid');
-const sharp = require('sharp');
+var Jimp = require("jimp");
 
 const NUM_KEYS = 15;
 const PAGE_PACKET_SIZE = 8191;
@@ -144,9 +144,10 @@ class StreamDeck extends EventEmitter {
 				const b = imageBuffer.readUInt8(i + 2);
 				row.push(b, g, r);
 			}
-			pixels = pixels.concat(row.reverse());
+			pixels = pixels.concat(row);
 		}
-
+		pixels.reverse();
+		
 		const firstPagePixels = pixels.slice(0, NUM_FIRST_PAGE_PIXELS * 3);
 		const secondPagePixels = pixels.slice(NUM_FIRST_PAGE_PIXELS * 3, NUM_TOTAL_PIXELS * 3);
 		this._writePage1(keyIndex, Buffer.from(firstPagePixels));
@@ -162,15 +163,18 @@ class StreamDeck extends EventEmitter {
 	 */
 	fillImageFromFile(keyIndex, filePath) {
 		StreamDeck.checkValidKeyIndex(keyIndex);
+		
+		return Jimp.read(filePath).then((err, image) => {
 
-		return sharp(filePath)
-			.flatten() // Eliminate alpha channel, if any.
-			.resize(this.ICON_SIZE)
-			.raw()
-			.toBuffer()
-			.then(buffer => {
-				return this.fillImage(keyIndex, buffer);
-			});
+			image
+				.resize( this.ICON_SIZE, this.ICON_SIZE )
+				.getBuffer( Jimp.MIME_BMP, (err, imageBuffer) => {
+					if (err) throw err;
+					
+					var shouldBeSize = this.ICON_SIZE * this.ICON_SIZE * 3;
+					this.fillImage(keyIndex, imageBuffer.slice(imageBuffer.length-shouldBeSize  ));
+				});
+		});
 	}
 
 	/**
