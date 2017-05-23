@@ -14,25 +14,23 @@ const NUM_SECOND_PAGE_PIXELS = 2601;
 const ICON_SIZE = 72;
 const NUM_TOTAL_PIXELS = NUM_FIRST_PAGE_PIXELS + NUM_SECOND_PAGE_PIXELS;
 
-const devices = HID.devices();
-const connectedStreamDecks = devices.filter(device => {
-	return device.vendorId === 0x0fd9 && device.productId === 0x0060;
-});
-
-/* istanbul ignore if  */
-if (connectedStreamDecks.length > 1) {
-	throw new Error('More than one Stream Deck is connected. This is unsupported at this time.');
-}
-
-/* istanbul ignore if  */
-if (connectedStreamDecks.length < 1) {
-	throw new Error('No Stream Decks are connected.');
-}
-
 class StreamDeck extends EventEmitter {
 	constructor(device) {
 		super();
-		this.device = device;
+		
+		if (!device) {
+			// Device not provided, will then select any connected device:
+			const devices = HID.devices();
+			const connectedStreamDecks = devices.filter(device => {
+				return device.vendorId === 0x0fd9 && device.productId === 0x0060;
+			});
+			if (!connectedStreamDecks.length) throw new Error('No Stream Decks are connected.');
+			this.device = new HID.HID(connectedStreamDecks[0].path);
+		} else {
+			this.device = device;
+		}
+		
+		
 		this.keyState = new Array(NUM_KEYS).fill(false);
 
 		this.device.on('data', data => {
@@ -287,4 +285,4 @@ class StreamDeck extends EventEmitter {
 	}
 }
 
-module.exports = new StreamDeck(new HID.HID(connectedStreamDecks[0].path));
+module.exports = StreamDeck;
