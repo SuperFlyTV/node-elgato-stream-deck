@@ -5,7 +5,7 @@ const EventEmitter = require('events');
 
 // Packages
 const HID = require('node-hid');
-var Jimp = require("jimp");
+const Jimp = require('jimp');
 
 const NUM_KEYS = 15;
 const PAGE_PACKET_SIZE = 8191;
@@ -19,20 +19,21 @@ const PANEL_BUTTONS_Y = 3;
 class StreamDeck extends EventEmitter {
 	constructor(device) {
 		super();
-		
-		if (!device) {
+
+		if (device) {
+			this.device = device;
+		} else {
 			// Device not provided, will then select any connected device:
 			const devices = HID.devices();
 			const connectedStreamDecks = devices.filter(device => {
 				return device.vendorId === 0x0fd9 && device.productId === 0x0060;
 			});
-			if (!connectedStreamDecks.length) throw new Error('No Stream Decks are connected.');
+			if (!connectedStreamDecks.length) {
+				throw new Error('No Stream Decks are connected.');
+			}
 			this.device = new HID.HID(connectedStreamDecks[0].path);
-		} else {
-			this.device = device;
 		}
-		
-		
+
 		this.keyState = new Array(NUM_KEYS).fill(false);
 
 		this.device.on('data', data => {
@@ -49,7 +50,6 @@ class StreamDeck extends EventEmitter {
 						this.emit('up', i);
 					}
 				}
-
 				this.keyState[i] = keyPressed;
 			}
 		});
@@ -149,7 +149,7 @@ class StreamDeck extends EventEmitter {
 			pixels = pixels.concat(row);
 		}
 		pixels.reverse();
-		
+
 		const firstPagePixels = pixels.slice(0, NUM_FIRST_PAGE_PIXELS * 3);
 		const secondPagePixels = pixels.slice(NUM_FIRST_PAGE_PIXELS * 3, NUM_TOTAL_PIXELS * 3);
 		this._writePage1(keyIndex, Buffer.from(firstPagePixels));
@@ -165,16 +165,16 @@ class StreamDeck extends EventEmitter {
 	 */
 	fillImageFromFile(keyIndex, filePath) {
 		StreamDeck.checkValidKeyIndex(keyIndex);
-		
-		return Jimp.read(filePath).then((err, image) => {
-
+		return Jimp.read(filePath).then(image => {
 			image
-				.resize( ICON_SIZE, ICON_SIZE )
-				.getBuffer( Jimp.MIME_BMP, (err, imageBuffer) => {
-					if (err) throw err;
-					
-					var shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
-					this.fillImage(keyIndex, imageBuffer.slice(imageBuffer.length-shouldBeSize  ));
+				.cover(ICON_SIZE, ICON_SIZE)
+				.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+					if (err) {
+						throw err;
+					}
+
+					const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
+					this.fillImage(keyIndex, imageBuffer.slice(imageBuffer.length - shouldBeSize));
 				});
 		});
 	}
@@ -184,31 +184,48 @@ class StreamDeck extends EventEmitter {
 	 * @returns {Promise<void>} Resolves when the file has been written
 	 */
 	fillImageOnAll(filePath) {
-		return Jimp.read(filePath).then((image) => {
-			
-			image
-				.contain( PANEL_BUTTONS_X * ICON_SIZE, PANEL_BUTTONS_Y * ICON_SIZE );
-				
-			
-			for (var y=0; y<PANEL_BUTTONS_Y;y++) {
-				for (var x=0; x<PANEL_BUTTONS_X;x++) {
+		return new Promise((resolve, reject) => {
+			Jimp.read(filePath)
+				.then(image => {
+					image
+						.contain(PANEL_BUTTONS_X * ICON_SIZE, PANEL_BUTTONS_Y * ICON_SIZE);
 
-					(()=> {
-						var i = (y*PANEL_BUTTONS_X)+PANEL_BUTTONS_X-x-1;
-						
-						var buttonImg = image.clone();
-
-						buttonImg
-							.crop( x*ICON_SIZE, y*ICON_SIZE, ICON_SIZE, ICON_SIZE)
-							.getBuffer( Jimp.MIME_BMP, (a,imageBuffer) => {
-								
-								var shouldBeSize = ICON_SIZE*ICON_SIZE * 3;
-								this.fillImage(i, imageBuffer.slice(imageBuffer.length-shouldBeSize  ));
+					const buttons = [];
+					for (let y = 0; y < PANEL_BUTTONS_Y; y++) {
+						for (let x = 0; x < PANEL_BUTTONS_X; x++) {
+							buttons.push({
+								i: (y * PANEL_BUTTONS_X) + PANEL_BUTTONS_X - x - 1,
+								x,
+								y
 							});
-						
-					})();
-				}
-			}
+						}
+					}
+
+					const buttonPromises = buttons.map(button => {
+						return new Promise((resolve, reject) => {
+							image
+								.clone()
+								.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
+								.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+									if (err) {
+										reject(err);
+									}
+									const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
+									this.fillImage(button.i, imageBuffer.slice(imageBuffer.length - shouldBeSize));
+									resolve();
+								});
+						});
+					});
+					Promise
+						.all(buttonPromises)
+						.then(() => {
+							resolve();
+						});
+				})
+				.catch(error => {
+					reject(error);
+				});
+			//
 		});
 	}
 

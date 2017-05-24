@@ -31,7 +31,9 @@ mockery.enable({
 });
 
 // Must be required after we register a mock for `node-hid`.
-const streamDeck = require('../');
+const StreamDeck = require('../');
+
+const streamDeck = new StreamDeck();
 
 test.afterEach(() => {
 	streamDeck.device.write.reset();
@@ -100,6 +102,24 @@ test.cb('fillImageFromFile', t => {
 			]
 		);
 		t.end();
+	});
+});
+
+test.cb('fillImageOnAll', t => {
+	streamDeck.fillImageOnAll(path.resolve(__dirname, 'fixtures', 'red_square.png'))
+	.then(() => {
+		validateWriteCall(
+			t,
+			streamDeck.device.write,
+			[
+				'fillImageOnAll-red_square-page1.json',
+				'fillImageOnAll-red_square-page2.json'
+			]
+		);
+		t.end();
+	})
+	.catch(error => {
+		throw error;
 	});
 });
 
