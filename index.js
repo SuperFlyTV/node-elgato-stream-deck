@@ -7,6 +7,7 @@ const EventEmitter = require('events');
 const HID = require('node-hid');
 const Jimp = require('jimp');
 const NodeCache = require('node-cache');
+require('bluefill');
 
 const NUM_KEYS = 15;
 const PAGE_PACKET_SIZE = 8191;
@@ -198,25 +199,26 @@ class StreamDeck extends EventEmitter {
 						});
 					}
 				}
-				const buttonPromises = buttons.map(button => {
-					return new Promise((resolve, reject) => {
-						image
-							.clone()
-							.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
-							.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
-								if (err) {
-									reject(err);
-								} else {
-									resolve({
-										button,
-										imageBuffer
-									});
-								}
-							});
-					});
-				});
-				Promise
-					.all(buttonPromises)
+
+				Promise.map(
+					buttons,
+					button => {
+						return new Promise((resolve, reject) => {
+							image
+								.clone()
+								.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
+								.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+									if (err) {
+										reject(err);
+									} else {
+										resolve({
+											button,
+											imageBuffer
+										});
+									}
+								});
+						});
+					})
 					.then(buttonImageBuffers => {
 						callback(null, buttonImageBuffers);
 					})
@@ -245,22 +247,12 @@ class StreamDeck extends EventEmitter {
 	 * @returns {Promise<void>} Resolves when the files have been prepared
 	 */
 	prepareFiles(filePaths) {
-		return new Promise((resolve, reject) => {
-			const filePromises = [];
-			filePaths.forEach(filePath => {
+		return Promise.map(
+			filePaths,
+			filePath => {
 				// Do the standard manipulation to cache it:
-				filePromises.push(this._getCachedImageFromPath(filePath, this._manipulateStandardImage));
+				return this._getCachedImageFromPath(filePath, this._manipulateStandardImage);
 			});
-
-			Promise
-				.all(filePromises)
-				.then(() => {
-					resolve();
-				})
-				.catch(e => {
-					reject(e);
-				});
-		});
 	}
 
 	/**
