@@ -5,7 +5,7 @@ const EventEmitter = require('events');
 
 // Packages
 const HID = require('node-hid');
-const Jimp = require('jimp');
+const jimp = require('jimp');
 require('bluefill');
 
 const NUM_KEYS = 15;
@@ -166,10 +166,10 @@ class StreamDeck extends EventEmitter {
 	 */
 	fillImageFromFile(keyIndex, filePath) {
 		StreamDeck.checkValidKeyIndex(keyIndex);
-		return Jimp.read(filePath).then(image => {
+		return jimp.read(filePath).then(image => {
 			image
 				.cover(ICON_SIZE, ICON_SIZE)
-				.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+				.getBuffer(jimp.MIME_BMP, (err, imageBuffer) => {
 					if (err) {
 						throw err;
 					}
@@ -186,7 +186,7 @@ class StreamDeck extends EventEmitter {
 	 */
 	fillImageOnAll(filePath) {
 		return new Promise((resolve, reject) => {
-			Jimp.read(filePath)
+			jimp.read(filePath)
 				.then(image => {
 					image
 						.contain(PANEL_BUTTONS_X * ICON_SIZE, PANEL_BUTTONS_Y * ICON_SIZE);
@@ -208,7 +208,7 @@ class StreamDeck extends EventEmitter {
 								image
 									.clone()
 									.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
-									.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+									.getBuffer(jimp.MIME_BMP, (err, imageBuffer) => {
 										if (err) {
 											reject(err);
 										}
@@ -225,7 +225,6 @@ class StreamDeck extends EventEmitter {
 				.catch(error => {
 					reject(error);
 				});
-			//
 		});
 	}
 
