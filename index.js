@@ -17,6 +17,7 @@ const ICON_SIZE = 72;
 const NUM_TOTAL_PIXELS = NUM_FIRST_PAGE_PIXELS + NUM_SECOND_PAGE_PIXELS;
 const PANEL_BUTTONS_X = 5;
 const PANEL_BUTTONS_Y = 3;
+const MIN_UP_TIME = 100; // [milliseconds]
 
 class StreamDeck extends EventEmitter {
 	constructor(device) {
@@ -36,7 +37,18 @@ class StreamDeck extends EventEmitter {
 			this.device = new HID.HID(connectedStreamDecks[0].path);
 		}
 
-		this.keyState = new Array(NUM_KEYS).fill(false);
+		this._keyState = (new Array(NUM_KEYS)).fill(null).map(() => {
+			return {
+				time: 0,
+				key: false
+			};
+		});
+		this._internalKeyState = (new Array(NUM_KEYS)).fill(null).map(() => {
+			return {
+				time: 0,
+				key: false
+			};
+		});
 
 		this.device.on('data', data => {
 			// The first byte is a report ID, the last byte appears to be padding
@@ -45,15 +57,11 @@ class StreamDeck extends EventEmitter {
 
 			for (let i = 0; i < NUM_KEYS; i++) {
 				const keyPressed = Boolean(data[i]);
-				if (keyPressed !== this.keyState[i]) {
-					if (keyPressed) {
-						this.emit('down', i);
-					} else {
-						this.emit('up', i);
-					}
+				if (this._keyState[i].key !== keyPressed) {
+					this._keyState[i].key = keyPressed;
 				}
-				this.keyState[i] = keyPressed;
 			}
+			this._updateState();
 		});
 
 		this.device.on('error', err => {
@@ -64,6 +72,46 @@ class StreamDeck extends EventEmitter {
 		this._imageCache = new NodeCache({
 			stdTTL: 24 * 3600 // TTL (s) for cached images
 		});
+		this._updateStateTimeout = 0;
+	}
+	/**
+	 * Acts like a filter, to prevent unintentional double-clicks due to glitches in the buttons
+	 * Waits MIN_UP_TIME from a button is initially pressed, before the button is considered to be "up" again
+	 *
+	 * @returns undefined
+	 */
+	_updateState() {
+		let needToCheckLater = false;
+		this._internalKeyState.forEach((internalState, i) => {
+			const keyState = this._keyState[i];
+			if (internalState.key !== keyState.key) {
+				if (keyState.key && !internalState.time) {
+					internalState.time = Date.now();
+				}
+				if (
+					keyState.key || // Key is pressed down
+					(Date.now() - (internalState.time || 0)) > MIN_UP_TIME
+				) {
+					internalState.key = keyState.key;
+					if (keyState.key) {
+						this.emit('down', i);
+					} else {
+						this.emit('up', i);
+						internalState.time = 0;
+					}
+				} else {
+					needToCheckLater = true;
+				}
+			}
+		});
+		if (needToCheckLater) {
+			if (!this._updateStateTimeout) {
+				this._updateStateTimeout = setTimeout(() => {
+					this._updateStateTimeout = 0;
+					this._updateState();
+				}, MIN_UP_TIME / 2);
+			}
+		}
 	}
 
 	/**
