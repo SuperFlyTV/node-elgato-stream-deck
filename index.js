@@ -6,6 +6,7 @@ const EventEmitter = require('events');
 // Packages
 const HID = require('node-hid');
 const Jimp = require('jimp');
+require('bluefill');
 
 const NUM_KEYS = 15;
 const PAGE_PACKET_SIZE = 8191;
@@ -200,24 +201,23 @@ class StreamDeck extends EventEmitter {
 							});
 						}
 					}
-
-					const buttonPromises = buttons.map(button => {
-						return new Promise((resolve, reject) => {
-							image
-								.clone()
-								.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
-								.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
-									if (err) {
-										reject(err);
-									}
-									const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
-									this.fillImage(button.i, imageBuffer.slice(imageBuffer.length - shouldBeSize));
-									resolve();
-								});
-						});
-					});
-					Promise
-						.all(buttonPromises)
+					Promise.map(
+						buttons,
+						button => {
+							return new Promise((resolve, reject) => {
+								image
+									.clone()
+									.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
+									.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+										if (err) {
+											reject(err);
+										}
+										const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
+										this.fillImage(button.i, imageBuffer.slice(imageBuffer.length - shouldBeSize));
+										resolve();
+									});
+							});
+						})
 						.then(() => {
 							resolve();
 						});
