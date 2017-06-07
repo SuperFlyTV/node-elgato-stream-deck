@@ -6,6 +6,7 @@ const EventEmitter = require('events');
 // Packages
 const HID = require('node-hid');
 const Jimp = require('jimp');
+const NodeCache = require('node-cache');
 
 const NUM_KEYS = 15;
 const PAGE_PACKET_SIZE = 8191;
@@ -56,6 +57,11 @@ class StreamDeck extends EventEmitter {
 
 		this.device.on('error', err => {
 			this.emit('error', err);
+		});
+
+		this.cacheImages = true;
+		this._imageCache = new NodeCache({
+			stdTTL: 24 * 3600 // TTL (s) for cached images
 		});
 	}
 
@@ -165,18 +171,11 @@ class StreamDeck extends EventEmitter {
 	 */
 	fillImageFromFile(keyIndex, filePath) {
 		StreamDeck.checkValidKeyIndex(keyIndex);
-		return Jimp.read(filePath).then(image => {
-			image
-				.cover(ICON_SIZE, ICON_SIZE)
-				.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
-					if (err) {
-						throw err;
-					}
-
-					const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
-					this.fillImage(keyIndex, imageBuffer.slice(imageBuffer.length - shouldBeSize));
-				});
-		});
+		return this._getCachedImageFromPath(filePath, this._manipulateStandardImage)
+			.then(imageBuffer => {
+				const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
+				this.fillImage(keyIndex, imageBuffer.slice(imageBuffer.length - shouldBeSize));
+			});
 	}
 	/**
 	 * Fill's the whole panel with an image from a file. The file is scaled to fit (no stretching)
@@ -185,47 +184,82 @@ class StreamDeck extends EventEmitter {
 	 */
 	fillImageOnAll(filePath) {
 		return new Promise((resolve, reject) => {
-			Jimp.read(filePath)
-				.then(image => {
-					image
-						.contain(PANEL_BUTTONS_X * ICON_SIZE, PANEL_BUTTONS_Y * ICON_SIZE);
+			this._getCachedImageFromPath(filePath, (image, callback) => {
+				image.contain(PANEL_BUTTONS_X * ICON_SIZE, PANEL_BUTTONS_Y * ICON_SIZE);
 
-					const buttons = [];
-					for (let y = 0; y < PANEL_BUTTONS_Y; y++) {
-						for (let x = 0; x < PANEL_BUTTONS_X; x++) {
-							buttons.push({
-								i: (y * PANEL_BUTTONS_X) + PANEL_BUTTONS_X - x - 1,
-								x,
-								y
-							});
-						}
+				// Prepare all button-images and save to cache:
+				const buttons = [];
+				for (let y = 0; y < PANEL_BUTTONS_Y; y++) {
+					for (let x = 0; x < PANEL_BUTTONS_X; x++) {
+						buttons.push({
+							i: (y * PANEL_BUTTONS_X) + PANEL_BUTTONS_X - x - 1,
+							x,
+							y
+						});
 					}
-
-					const buttonPromises = buttons.map(button => {
-						return new Promise((resolve, reject) => {
-							image
-								.clone()
-								.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
-								.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
-									if (err) {
-										reject(err);
-									}
-									const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
-									this.fillImage(button.i, imageBuffer.slice(imageBuffer.length - shouldBeSize));
-									resolve();
-								});
-						});
+				}
+				const buttonPromises = buttons.map(button => {
+					return new Promise((resolve, reject) => {
+						image
+							.clone()
+							.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
+							.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+								if (err) {
+									reject(err);
+								} else {
+									resolve({
+										button,
+										imageBuffer
+									});
+								}
+							});
 					});
-					Promise
-						.all(buttonPromises)
-						.then(() => {
-							resolve();
-						});
-				})
-				.catch(error => {
-					reject(error);
 				});
-			//
+				Promise
+					.all(buttonPromises)
+					.then(buttonImageBuffers => {
+						callback(null, buttonImageBuffers);
+					})
+					.catch(e => {
+						callback(e, null);
+					});
+			})
+			.then(buttonImageBuffers => {
+				buttonImageBuffers.forEach(buttonImageBuffer => {
+					const shouldBeSize = ICON_SIZE * ICON_SIZE * 3;
+					this.fillImage(
+						buttonImageBuffer.button.i,
+						buttonImageBuffer.imageBuffer.slice(buttonImageBuffer.imageBuffer.length - shouldBeSize)
+					);
+				});
+				resolve();
+			})
+			.catch(e => {
+				reject(e);
+			});
+		});
+	}
+	/**
+	 * Prepares the given images, putting them in the cache for quicker later use
+	 * @param {Array<String>} filePaths: an array of filePaths
+	 * @returns {Promise<void>} Resolves when the files have been prepared
+	 */
+	prepareFiles(filePaths) {
+		return new Promise((resolve, reject) => {
+			const filePromises = [];
+			filePaths.forEach(filePath => {
+				// Do the standard manipulation to cache it:
+				filePromises.push(this._getCachedImageFromPath(filePath, this._manipulateStandardImage));
+			});
+
+			Promise
+				.all(filePromises)
+				.then(() => {
+					resolve();
+				})
+				.catch(e => {
+					reject(e);
+				});
 		});
 	}
 
@@ -252,7 +286,101 @@ class StreamDeck extends EventEmitter {
 		}
 		this.sendFeatureReport(this._padToLength(Buffer.from([0x05, 0x55, 0xaa, 0xd1, 0x01, percentage]), 17));
 	}
-
+	_manipulateStandardImage(image) {
+		return image.cover(ICON_SIZE, ICON_SIZE);
+	}
+	/**
+	 * Fetches a image, either from filePath or cache
+	 *
+	 * @param {String} filePath A file path to an image file
+	 * @param {function} imageManipulatorCallback either a synchronous function or a callback-style function
+	 *   that manipulates the image before it is stored in the cache
+	 * @returns {Promise<imageBuffer>} Resolves when the file has fetched
+	 */
+	_getCachedImageFromPath(filePath, imageManipulatorCallback) {
+		return new Promise((resolve, reject) => {
+			if (this.cacheImages) {
+				if (!imageManipulatorCallback) {
+					imageManipulatorCallback = '';
+				}
+				const cacheKey = filePath + '_' + imageManipulatorCallback.toString();
+				this._imageCache.get(cacheKey, (err, imageBuffer) => {
+					if (err) {
+						reject(err);
+					} else if (imageBuffer === undefined) {
+						// No hit in cache
+						this._getImageFromPath(filePath, imageManipulatorCallback)
+							.then(imageBuffer => {
+								this._imageCache.set(cacheKey, imageBuffer, err => {
+									if (err) {
+										reject(err);
+									} else {
+										resolve(imageBuffer);
+									}
+								});
+							})
+							.catch(e => {
+								reject(e);
+							});
+					} else {
+						resolve(imageBuffer);
+					}
+				});
+			} else {
+				this._getImageFromPath(filePath, imageManipulatorCallback)
+					.then(imageBuffer => {
+						resolve(imageBuffer);
+					})
+					.catch(e => {
+						reject(e);
+					});
+			}
+		});
+	}
+	/**
+	 * Fetches an image from a file path, allowing for a step of manipulation before returning it
+	 *
+	 * @param {String} filePath A file path to an image file
+	 * @param {function} imageManipulatorCallback either a synchronous function or a callback-style function
+	 *   that manipulates the image before it is stored in the cache
+	 * @returns {Promise<imageBuffer>} Resolves when the file has fetched
+	 */
+	_getImageFromPath(filePath, imageManipulatorCallback) {
+		return new Promise((resolve, reject) => {
+			Jimp.read(filePath)
+				.then(image => {
+					const finalizeFcn = function (err, imageOrImageBuffer) {
+						if (err) {
+							reject(err);
+						} else if (!imageOrImageBuffer) {
+							reject(new Error('Bad value returned from callback function!'));
+						} else if (imageOrImageBuffer instanceof Jimp) {
+							// Is an image
+							imageOrImageBuffer.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+								if (err) {
+									reject(err);
+								} else {
+									resolve(imageBuffer);
+								}
+							});
+						} else {
+							// Is a image buffer (or whatever the manipulator function returned)
+							resolve(imageOrImageBuffer);
+						}
+					};
+					if (typeof imageManipulatorCallback === 'function') {
+						const manipulatedImage = imageManipulatorCallback(image, finalizeFcn);
+						if (manipulatedImage) {
+							finalizeFcn(null, manipulatedImage);
+						} // Else we're expecting the function to call it's callback
+					}
+				})
+				.catch(e => {
+					reject(e);
+				})
+			;
+		});
+	}
 	/**
 	 * Writes a Stream Deck's page 1 headers and image data to the Stream Deck.
 	 *
