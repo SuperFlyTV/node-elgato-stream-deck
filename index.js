@@ -5,7 +5,7 @@ const EventEmitter = require('events');
 
 // Packages
 const HID = require('node-hid');
-const Jimp = require('jimp');
+const jimp = require('jimp');
 const NodeCache = require('node-cache');
 require('bluefill');
 
@@ -207,7 +207,7 @@ class StreamDeck extends EventEmitter {
 							image
 								.clone()
 								.crop(button.x * ICON_SIZE, button.y * ICON_SIZE, ICON_SIZE, ICON_SIZE)
-								.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+								.getBuffer(jimp.MIME_BMP, (err, imageBuffer) => {
 									if (err) {
 										reject(err);
 									} else {
@@ -339,16 +339,16 @@ class StreamDeck extends EventEmitter {
 	 */
 	_getImageFromPath(filePath, imageManipulatorCallback) {
 		return new Promise((resolve, reject) => {
-			Jimp.read(filePath)
+			jimp.read(filePath)
 				.then(image => {
 					const finalizeFcn = function (err, imageOrImageBuffer) {
 						if (err) {
 							reject(err);
 						} else if (!imageOrImageBuffer) {
 							reject(new Error('Bad value returned from callback function!'));
-						} else if (imageOrImageBuffer instanceof Jimp) {
+						} else if (imageOrImageBuffer instanceof jimp) {
 							// Is an image
-							imageOrImageBuffer.getBuffer(Jimp.MIME_BMP, (err, imageBuffer) => {
+							imageOrImageBuffer.getBuffer(jimp.MIME_BMP, (err, imageBuffer) => {
 								if (err) {
 									reject(err);
 								} else {
